@@ -1,0 +1,6 @@
+JSON                    4.10
+Module::Load            0.36
+Amazon::API::SSM        2.1.5
+Amazon::Credentials     1.1.25
+Class::Accessor::Fast   0.51
+Readonly                2.05

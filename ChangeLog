@@ -1,0 +1,23 @@
+Fri Oct 31 16:40:21 2025  Rob Lauer  <rclauer@gmail.com>
+
+	[BigBang]:
+	* .gitignore
+	* ChangeLog
+	* Makefile
+	* README.md
+	* VERSION
+	* buildspec.yml
+	* lib/Config/Resolver.pm.in
+	* lib/Config/Resolver/Plugin/SSM.pm.in
+	* lib/Config/Resolver/Utils.pm.in
+	* requires
+	* t/00-config.t
+	* t/01-config.t
+	* t/02-config.t
+	* t/03-config.t
+	* t/04-config.t
+	* t/05-plugin.t
+	* test-requires
+	* version.mk
+
+
