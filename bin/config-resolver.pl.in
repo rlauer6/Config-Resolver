@@ -1,0 +1,933 @@
+#!/usr/bin/env perl
+
+package CLI::Config::Resolver;
+
+# general purpose script for merging secrets and configuration values
+# to a template
+
+use strict;
+use warnings;
+
+use Carp;
+use CLI::Simple::Constants qw(:booleans :chars);
+use Config::Resolver;
+use Config::Resolver::Utils qw(is_hash is_array to_boolean slurp_file);
+use Data::Dumper;
+use English qw(-no_match_vars);
+use File::Basename;
+use Getopt::Long qw(:config no_ignore_case );
+use JSON -convert_blessed_universally;
+use List::Util qw(any);
+use Query::Param;
+use Scalar::Util qw(looks_like_number reftype);
+use YAML::Tiny qw(LoadFile Dump Load);
+
+use parent qw(CLI::Simple);
+
+########################################################################
+our $VERSION = '@PACKAGE_VERSION@';
+########################################################################
+
+use File::Basename;  # <-- Make sure to 'use' this at the top of the file
+
+########################################################################
+sub process_manifest {
+########################################################################
+  my ($self) = @_;
+
+  my $manifest_file = $self->get_manifest;
+
+  croak "ERROR: no manifest file specified. Use -m or --manifest\n"
+    if !$manifest_file;
+
+  croak "ERROR: manifest file not found: $manifest_file\n"
+    if !-e $manifest_file;
+
+  my $manifest = $self->fetch_file($manifest_file);
+  croak "ERROR: manifest file must be a HASH\n"
+    if ref $manifest ne 'HASH';
+
+  my $globals = $manifest->{globals} || {};
+  croak "ERROR: 'globals' section in manifest must be a HASH\n"
+    if ref $globals ne 'HASH';
+
+  my $jobs = $manifest->{jobs};
+  croak "ERROR: manifest file is missing required 'jobs' array\n"
+    if !$jobs || ref $jobs ne 'ARRAY';
+
+  for my $job ( @{$jobs} ) {
+    # 1. Merge globals and job-specific configs
+    my $final_job = { %{$globals}, %{$job} };
+
+    # 2. Extract final values
+    my $outfile    = $final_job->{outfile};
+    my $parameters = $final_job->{parameters};
+    my $template   = $final_job->{template};   # Might be undef
+
+    if ( !$template && $outfile && $final_job->{template_path} ) {
+      my $template_name = basename($outfile);
+      $template = $final_job->{template_path} . '/' . $template_name . '.tpl';
+
+      # Store the derived template path back in the hash
+      $final_job->{template} = $template;
+    }
+
+    # 3. Validate the final, resolved job
+    if ( !$template || !$outfile || !$parameters ) {
+      croak sprintf "ERROR: job is missing required keys (template, outfile, parameters)\n" . '(Job data: %s )',
+        Dumper($final_job);
+    }
+
+    # 4. Check that files exist *before* trying to run
+    croak "ERROR: parameter file not found: $parameters\n" if !-e $parameters;
+    croak "ERROR: template file not found: $template\n"    if !-e $template;
+
+    # 5. Set object state and run the resolver
+    $self->set_parameter_file($parameters);
+    $self->set_template($template);
+    $self->set_outfile($outfile);
+    $self->set_umask( $final_job->{umask} ) if $final_job->{umask};
+
+    $self->fetch_parameters();
+    $self->resolve();
+  }
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_resolve {
+########################################################################
+  my ($self) = @_;
+
+  return $self->process_manifest
+    if $self->get_manifest;
+
+  $self->resolve;
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub fetch_template {
+########################################################################
+  my ($self) = @_;
+
+  # this will read from STDIN if there is content there
+  my $content = $self->fetch_file;
+
+  if ( !$content && $self->get_template_file ) {
+    $content = $self->fetch_file( $self->get_template_file );
+  }
+
+  $self->set_template($content);
+
+  return;
+}
+
+########################################################################
+sub resolve {
+########################################################################
+  my ($self) = @_;
+
+  my $resolver = $self->get_resolver;
+
+  my $output = $resolver->resolve( $self->get_parameters_hash );
+
+  if ( my $template = $self->get_template ) {
+    my $template_obj = $self->fetch_file($template);
+
+    if ( !ref $template_obj ) {
+      open my $fh, '<', \$template_obj;
+      $output = $self->resolve_stream( $fh, $output );
+      close $fh;
+    }
+    else {
+      $output = $resolver->resolve( $template_obj, $output );
+    }
+  }
+
+  return $self->write_output($output);
+}
+
+########################################################################
+sub cmd_dump {
+########################################################################
+  my ($self) = @_;
+
+  my ($file) = $self->get_args;
+  $file //= $self->get_parameters;
+
+  croak "ERROR: no file specified for dump, use --parameters or dump filename\n"
+    if !$file;
+
+  croak "ERROR: no such file - $file\n"
+    if !-e $file;
+
+  my $object = $self->fetch_file($file);
+
+  if ( $self->get_key ) {
+    $self->write_output( $object->{ $self->get_key } );
+  }
+  else {
+    $self->write_output($object);
+  }
+
+  return $SUCCESS;
+}
+
+# converts value to JSON string, undef to <undefined> or just returns value
+########################################################################
+sub format_value {
+########################################################################
+  my ( $self, $val, $key ) = @_;
+
+  if ( ref $val && $key ) {
+    $val = $val->{$key};
+
+    die "$key not found\n"
+      if !defined $val && $self->get_warning_level eq 'error';
+  }
+
+  return '<undefined>'
+    if !defined $val;
+
+  return $val
+    if !ref $val;
+
+  return to_json(
+    $val,
+    { allow_blessed   => $TRUE,
+      convert_blessed => $TRUE,
+      pretty          => $self->get_pretty ? $TRUE : $FALSE,
+    }
+  );
+}
+
+########################################################################
+sub fetch_parameters {
+########################################################################
+  my ($self) = @_;
+
+  if ( my $file = $self->get_parameter_file ) {
+    my $parameters = $self->fetch_file($file);
+
+    my $new_hash = { %{ $self->get_parameters_hash // {} }, %{$parameters} };
+    $self->set_parameters_hash($new_hash);
+  }
+
+  return $self->get_parameters_hash;
+}
+
+########################################################################
+sub to_object {
+########################################################################
+  my ($content) = @_;
+
+  local $SIG{__WARN__} = sub { };
+
+  my $obj = eval { from_json($content); };
+
+  return $obj
+    if $obj;
+
+  $obj = eval { return Load($content) };
+
+  return $obj
+    if $obj;
+
+  $obj = eval { from_ini_file($content); };
+
+  return $obj
+    if $obj;
+
+  return;
+}
+
+########################################################################
+sub from_ini_file {
+########################################################################
+  my ($content) = @_;
+
+  require Config::INI::Tiny;
+
+  my $config  = Config::INI::Tiny->new->to_hash($content);
+  my $globals = delete $config->{q{}};
+  $globals //= {};
+
+  return { %{$globals}, %{$config} };
+}
+
+########################################################################
+sub fetch_file {
+########################################################################
+  my ( $self, $file ) = @_;
+
+  my $obj = eval {
+    if ( $file eq q{-} || ( !$file && !-t STDIN ) ) {  ## no critic (ProhibitInteractiveTest)
+      local $RS = undef;
+      my $content = <>;
+      my $obj     = eval { return to_object($content); };
+
+      return $obj // $content;
+    }
+
+    return from_ini_file( slurp_file $file )
+      if $file =~ /[.]config-resolverrc$/xsm;
+
+    return LoadFile($file)
+      if $file =~ /[.]ya?ml$/xsm;
+
+    my $content = slurp_file($file);
+
+    return from_json($content)
+      if $file =~ /[.]json$/xsm;
+
+    return $content;
+  };
+
+  croak "ERROR: could not fetch object from $file\n$EVAL_ERROR"
+    if !$obj || $EVAL_ERROR;
+
+  return $obj;
+}
+
+########################################################################
+sub fetch_query_params {
+########################################################################
+  my ($self) = @_;
+
+  my $query_string = $ENV{QUERY_STRING} // $self->get_parameters;
+
+  return
+    if !$query_string;
+
+  my $qparams = Query::Param->new($query_string);
+
+  my $new_hash = { %{ $self->get_parameters_hash // {} }, %{ $qparams->params } };
+  $self->set_parameters_hash($new_hash);
+
+  return $self->get_parameters_hash;
+}
+
+########################################################################
+sub resolve_stream {
+########################################################################
+  my ( $self, $fh, $parameters ) = @_;
+
+  my $resolver = $self->get_resolver;
+
+  my $output = $EMPTY;
+
+  while ( my $line = <$fh> ) {
+    if ( $line =~ /[$][{](.*)[}]/xsm ) {
+      my $ref = $resolver->resolve( { value => $line }, $parameters );
+      $output .= $ref->{value};
+      next;
+    }
+
+    $output .= $line;
+  }
+
+  return $output;
+}
+
+########################################################################
+sub choose(&) {  ## no critic
+########################################################################
+  return $_[0]->();
+}
+
+########################################################################
+sub write_output {
+########################################################################
+  my ( $self, $obj ) = @_;
+
+  my $outfile = $self->get_outfile;
+
+  my $fh = choose {
+    return *STDOUT
+      if !$self->get_outfile;
+
+    if ( $self->get_umask ) {
+      umask $self->get_umask;
+    }
+
+    open my $fh, '>', $outfile
+      or croak "ERROR: could not open $outfile for writing\n$OS_ERROR\n";
+
+    return $fh;
+  };
+
+  if ( ref $obj ) {
+    my $format = $self->get_format // 'json';
+
+    if ( $format eq 'json' ) {
+      print {$fh} to_json(
+        $obj,
+        { allow_blessed   => $TRUE,
+          convert_blessed => $TRUE,
+          pretty          => $self->get_pretty ? $TRUE : $FALSE,
+        },
+      );
+    }
+    elsif ( $format =~ /^ya?ml$/xsm ) {
+      print {$fh} Dump($obj);
+    }
+  }
+  else {
+    print {$fh} $obj;
+  }
+
+  close $fh;
+
+  return;
+}
+
+########################################################################
+sub _build_plugin_config {
+########################################################################
+  my ($self) = @_;
+
+  # Layer 1: Load defaults from RC file
+  my $rc_file = $ENV{HOME} . '/.config-resolverrc';
+
+  my $rc_config = -e $rc_file ? $self->fetch_file($rc_file) : {};
+
+  # Layer 2: Parse CLI arguments
+  my $cli_config  = {};
+  my $plugin_args = $self->get_plugin // [];
+
+  for my $arg ( @{$plugin_args} ) {
+    my ( $plugin_name, $key_value_pair ) = split /:/, $arg, 2;
+    if ( !$key_value_pair ) {
+      warn "WARNING: Ignoring malformed --plugin argument: $arg\n";
+      next;
+    }
+    my ( $key, $value ) = split /=/, $key_value_pair, 2;
+    if ( !defined $value ) {
+      warn "WARNING: Ignoring malformed --plugin argument: $arg\n";
+      next;
+    }
+    $cli_config->{$plugin_name}{$key} = $value;
+  }
+
+  # Layer 3: Deeply merge them (CLI wins)
+  my $final_plugin_config = { %{$rc_config} };
+  foreach my $plugin_name ( keys %{$cli_config} ) {
+    $final_plugin_config->{$plugin_name} = { %{ $rc_config->{$plugin_name} // {} }, %{ $cli_config->{$plugin_name} } };
+  }
+
+  return $final_plugin_config;
+}
+
+########################################################################
+sub check_for_pipelining {
+########################################################################
+  my ($self) = @_;
+
+  my $pipelining = !-t STDIN;
+
+  my $parameter_file = $self->get_parameter_file;
+
+  my $template = $self->get_template;
+
+  return
+    if !$pipelining || any { $_ && $_ eq q{-} } ( $parameter_file, $template );
+
+  $self->set( $parameter_file ? 'template' : 'parameter_file', q{-} );
+
+  return;
+}
+
+########################################################################
+sub init {
+########################################################################
+  my ($self) = @_;
+
+  $self->check_for_pipelining;
+
+  my $final_plugin_config = $self->_build_plugin_config();
+
+  my $resolver = Config::Resolver->new(
+    plugin_config => $final_plugin_config,
+    warning_level => $self->get_warning_level,
+    debug         => $self->get_debug,
+    plugins       => [ split /\s*,\s*/xsm, $self->get_plugins // q{} ],
+  );
+
+  $self->set_resolver($resolver);
+
+  $self->fetch_query_params;
+
+  $self->fetch_parameters;
+
+  # support legacy -r, -d options
+  if ( $self->get_resolve ) {
+    $self->command('resolve');
+  }
+
+  if ( $self->get_dump ) {
+    $self->command('dump');
+  }
+
+  return;
+}
+
+########################################################################
+sub main {
+########################################################################
+
+  my @option_specs = qw(
+    debug|g
+    dump|d
+    format|f=s
+    help
+    key|k=s
+    manifest|m=s
+    outfile|o=s
+    parameter-file|p=s
+    pretty|P
+    parameters|V=s
+    plugins=s
+    plugin=s@
+    resolve|r
+    template=s
+    umask=s
+    warning-level|w=s
+  );
+
+  my %commands = (
+    dump    => \&cmd_dump,
+    resolve => \&cmd_resolve,
+  );
+
+  my %defaults = (
+    warning_level => 'warn',
+    format        => 'json',
+  );
+
+  my $cli = CLI::Config::Resolver->new(
+    commands      => \%commands,
+    option_specs  => \@option_specs,
+    extra_options => [qw(resolver parameters_hash)],
+    defaults      => \%defaults
+  );
+
+  return $cli->run();
+}
+
+exit main()
+  if !caller;
+
+1;
+
+__END__
+
+=pod
+
+=head1 NAME
+
+ config-resolver.pl
+
+=head1 SYNOPSIS
+
+Extract a single value from some JSON file...
+
+ export DBI_DSN=$(config-resolver.pl -p /usr/share/my-app/config.json DBI_DSN)
+
+Create a finalized configuration from a template...
+ 
+  config-resolver.pl \
+        -p /usr/share/my-app/config.json \
+        -t /usr/share/my-app/my-site.conf.tpl > /etc/apache2/sites-available/my-site.conf  
+
+=head1 DESCRIPTION
+
+A command-line utility for dynamically resolving placeholders in
+templates. It supports a robust variable substitution syntax that
+includes protocol handlers (plugins) that provide customized
+resolution of values.
+
+=head1 MOTIVATION
+
+C<Config::Resolver>, the engine behind this script, was created to
+provide a single, powerful, and secure tool for managing complex
+application configurations. It was designed to solve common challenges
+in modern, dynamic applications while giving developers an extensible
+tool.
+
+This utility provides a simple command-line interface to C<Config::Resolver>,
+allowing you to:
+
+=over 4
+
+=item * 
+
+B<Manage Multiple Environments:> Use conditional logic (e.g., C<${env eq 'prod' ? ...}>)
+to build a single, clean template that adapts to any environment.
+
+=item *
+
+B<Securely Fetch Secrets:> Keep secrets out of your codebase by
+using pluggable backends to fetch values at runtime (e.g., C<ssm://...>)
+right when you need them.
+
+=item *
+
+B<Simplify Deployment Scripts:> Replace complex and brittle C<sed>,
+C<awk>, or C<envsubst> logic in deployment scripts (like a
+C<docker-entrypoint.sh>) with a single, robust, and testable command.
+
+=item *
+
+B<Enable Simple Data Transformations:> Use safe, "allow-listed"
+functions (e.g., C<${uc(hostname)}>) to format values directly in
+your configuration.
+
+=item * 
+
+B<Use Plugins:> Use plugins for custom variable resolution.
+
+=back
+
+=head1 USAGE
+
+ config-resolver.pl OPTIONS [key=value key=value]
+
+Utility to extract value from config file, or apply
+parameters to a template file.
+
+=head2 Commands
+
+ resolve
+ dump
+
+=head2 Options
+
+ -d, --dump                dump the configuration file
+ -f, --format              output format (json or yml), default: json
+ -g, --debug               debug output
+ -h, --help                help
+ -k, --key                 key to output from configuration file
+ -o, --outfile             output file, default: STDOUT
+ -p, --parameter-file      name of the parameter file (JSON)
+ -V, --parameters          key/value pairs ala CGI (foo=bar&baz=buz)
+ --plugins                 a comma separated list of plugins
+ -P, --pretty              pretty print JSON
+ -t, --template            name of the template file
+ -u, --umask               umask to use output file
+ -w, --warning-level       "warn" or "error"
+
+See man 'config-resolver.pl' for more details.
+
+=head1 OPTION DETAILS
+
+=over 5
+
+=item -d, --dump
+
+Outputs all values from the parameters file. Use --format to control the
+output format.
+
+I<Note: This is a deprecated. Use the C<dump> command.>
+
+default: json
+
+=item -f, --format
+
+Output format. Valid values are 'json' or 'yml'.
+
+default: json
+
+=item -g,  --debug
+
+Logs debug messages to STDERR.
+
+=item -k, --key
+
+A key to dump from the parameters file.
+
+=item -P, --pretty
+
+Pretty print JSON output.
+
+default: false
+
+=item -m, --manifest
+
+Specifies a manifest file (YAML or JSON) for batch-processing multiple
+templates in a single run.
+
+See L</BATCH PROCESSING USING A MANIFEST FILE>
+
+=item -o, --outfile
+
+Name of the output file to create.  If not present, output is sent to STDOUT.
+
+default: STDOUT
+
+=item -p, -- parameter-file
+
+A JSON or YAML file that contains the parameters used for
+interpolation.
+
+The parameter file is used to populate the template.  Parameters
+I<values> should be constants or special values of the form:
+
+ xxx://key-path
+
+...where "xxx" represents the protocol prefix for a plugin
+(e.g. ssm:// for retrieving values from thhe AWS SSM Parameter Store
+API).
+
+default: none
+
+=item --plugins
+
+A comma delimited list of plugin names. See L</PLUGINS>
+
+=item --plugin xxx:key=value
+
+This is the mechanism you use to pass options to your plugins.
+
+Example:
+
+ --plugin ssm:endpoint_url=http://localhost:4566
+
+=item -V, --parameters
+
+You can supply key/value pairs at the command line to do simple
+templating operations.
+
+ echo 'foo=${foo}' | config-resolver -V 'foo=bar&bar=buz'
+
+=item -r, --resolve
+
+Resolve the parameters only and print out the resulting JSON.
+
+B<Example:>
+
+ config-resolver -p /etc/tbc-prod.json -r -P
+
+ config-resolover -p /etc/tbc-prod.json --pretty resolve
+
+=item -t, --template
+
+Name of the template file.  A template file can be a text file or a
+file that can be converted into a Perl data structure (.json, .yml).
+
+The template typically contains
+interpolation variables like:
+
+ ${foo.bar}
+
+These variables should map to values in the parameter file.  Paths of
+arbitrary complexity are supported.  Arrays are supported by using the
+notation [index].  For example, given the parameter object:
+
+ {
+  "foo": {
+      "bar": ["this","that"]
+  }
+ }
+
+ ${foo.bar[1]}
+
+...would point to the first value in the C<bar> array of the C<foo>
+object, i.e. "this".
+
+=item -u, --umask
+
+A umask to use when creating an output file.  The default is the umask
+of the current process.  Use 0027 to create a file that can only be read
+by the owner and the group that the owner belongs too.  Hence, if run
+by root, the output file will only be readable by root.
+
+default: none
+
+=item -w, --warn-level
+
+Determines how errors or missing paramters are handled. See below.
+
+=over 10
+
+=item warn
+
+Continues on errors but outtputs warning error messages when values
+cannot be resolved.
+
+=item error
+
+Halts processing if any value cannot be resolved.
+
+=back
+
+=back
+
+=head1 BATCH PROCESSING USING A MANIFEST FILE
+
+This is the most powerful way to use the script for provisioning a set
+of configuration files.
+
+The manifest file must be a HASH containing a C<jobs> key. It can also
+contain an optional C<globals> key to reduce repetition.
+
+=over 4
+
+=item C<globals>
+
+A HASH of default options that will be applied to every job. Common
+keys to set here are C<parameters>, C<template_path>, and C<umask>.
+
+=item C<jobs>
+
+A required ARRAY of HASHes. Each HASH in the array represents a single
+"job" to process (i.e., one template to render).
+
+=back
+
+=head2 Job Processing
+
+For each job in the C<jobs> array, its keys are merged with the C<globals>
+keys. Any key present in the job HASH will override the value from C<globals>.
+
+After merging, each job must have at least an C<outfile> and C<parameters>
+key.
+
+=head2 Convention Over Configuration
+
+To simplify the manifest, the C<template> key can be automatically
+derived based on convention:
+
+If a job has no C<template> key, but C<globals.template_path> and C<outfile>
+are present, the script will automatically set the template path to:
+
+  template = globals.template_path / basename(outfile) . '.tpl'
+
+You can always override this behavior by providing an explicit C<template>
+key in a job, which allows you to handle "one-offs" that don't follow
+the convention.
+
+=head2 Example C<manifest.yml>
+
+  # --- Global defaults for all jobs ---
+  globals:
+    parameters: /etc/my-app/common-config.json
+    template_path: /opt/my-app/templates
+    umask: 0027
+
+  # --- List of files to generate ---
+  jobs:
+    # JOB 1: USES CONVENTION
+    # 'template' is not specified, so it is derived:
+    # -> /opt/my-app/templates/app.properties.tpl
+    - outfile: /etc/my-app/app.properties
+
+    # JOB 2: USES CONVENTION
+    # 'template' is derived:
+    # -> /opt/my-app/templates/database.ini.tpl
+    - outfile: /etc/my-app/database.ini
+
+    # JOB 3: "ONE-OFF" (Overrides Globals)
+    # This job overrides 'parameters' and 'template'
+    # but still inherits 'umask' from globals.
+    - parameters: /etc/my-app/nginx-config.json
+      template: /opt/my-app/templates/special/nginx.conf.tpl
+      outfile: /etc/nginx/sites-available/my-app.conf
+
+=head1 PLUGINS
+
+Plugins (or "protocol handlers") are the core feature of
+C<Config::Resolver>. They allow you to fetch values from external
+sources directly from within your templates or parameter files.
+
+The script recognizes special value strings formatted as a URI:
+
+  protocol://path/to/value
+
+For example, to fetch a value from AWS SSM Parameter Store, you would use:
+
+  ${ssm:///path/to/my/secret}
+
+=head2 Built-in Backends
+
+The resolver engine includes two built-in backends that are always
+available and do not require any configuration:
+
+=over 4
+
+=item B<env://PATH>
+
+Resolves the value from C<$ENV{PATH}>. This is the recommended
+way to inject environment variables.
+
+  ${env://USER}
+
+=item B<file://PATH>
+
+Resolves the value by reading the entire contents of the file at
+C<PATH>. This is the recommended way to inject secrets, certificates,
+or tokens when more advanced plugins (AWS SSM, AWS Secrets Manager,
+etc) are not available.
+
+  ${file:///var/run/secrets/token}
+
+=back
+
+=head2 Plugin Configuration
+
+Many plugins, like C<ssm>, require configuration (e.g., the AWS
+region, or a custom endpoint for local testing). You can provide this
+configuration in two ways, which are layered:
+
+=head3 1. The RC File (Defaults)
+
+On startup, the script will attempt to load a configuration file from:
+
+  $HOME/.config-resolverrc
+
+This file (in JSON or YAML format) is the perfect place to set your
+team- or user-wide defaults.
+
+B<Example C<~/.config-resolverrc>:>
+
+ {
+   "ssm": {
+     "region": "us-east-1",
+     "endpoint_url": "http://localhost:4566"
+   },
+   "another_plugin": {
+     "foo": "bar"
+   }
+ }
+
+=head3 2. Command-Line Overrides (Specifics)
+
+You can override or provide new settings for any plugin on the command
+line using the C<--plugin:*> option. This is the top layer and will
+*always* win over the RC file.
+
+The syntax is:
+
+  --plugin PROTOCOL:key=value
+
+You can repeat the C<--plugin> option to build up the configuration.
+
+B<Example:>
+
+  config-resolver.pl \
+      --plugin ssm:region=us-west-2 \
+      --plugin ssm:endpoint_url=http://localhost:4566 \
+      -t my-template.tpl
+
+The script merges these two sources, giving command-line options final
+priority, and passes the result to the resolver engine.
+
+=head1 AUTHOR
+
+Rob Lauer - <bigfoot@cpan.org>
+
+=head1 SEE ALSO 
+
+L<Config::Resolver>, L<Config::Resolver::Plugin::SSM>, L<Config::Resolver::Plugin::SecretsManager>

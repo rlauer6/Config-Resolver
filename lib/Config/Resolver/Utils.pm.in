@@ -3,19 +3,37 @@ package Config::Resolver::Utils;
 use strict;
 use warnings;
 
-use Exporter qw(import);
+use English qw(-no_match_vars);
 use Scalar::Util qw(reftype);
 use Carp 'croak';
 
-# 1. List all functions we want to export
-our @EXPORT_OK = qw(to_boolean is_hash is_array);
+our @EXPORT_OK = qw(to_boolean is_hash is_array slurp_file);
 
 our $VERSION = '@PACKAGE_VERSION@';
 
-# 2. Add the _is sub, but DO NOT export it.
-#    It's a private helper for this module.
-sub _is { return ref $_[0] && ( reftype( $_[0] ) eq $_[1] || ref $_[0] eq $_[1] ); }
+use parent qw(Exporter);
 
+########################################################################
+sub slurp_file {
+########################################################################
+  my ($file) = @_;
+
+  local $RS = undef;
+
+  open my $fh, '<', $file
+    or croak "ERROR: could not open $file for reading\n$OS_ERROR";
+
+  my $content = <$fh>;
+
+  close $fh;
+
+  return $content;
+}
+
+########################################################################
+sub choose(&) { return $_[0]->(); }  ## no critic
+########################################################################
+sub _is { return ref $_[0] && ( reftype( $_[0] ) eq $_[1] || ref $_[0] eq $_[1] ); }
 ########################################################################
 sub is_hash { return _is( @_, 'HASH' ); }
 ########################################################################

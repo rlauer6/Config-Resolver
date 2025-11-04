@@ -1,2 +1,5 @@
-Readonly           2.05
-Test::More
+IO::Scalar  2.113
+IO::String  1.08
+JSON        4.10
+Test::Warn  0.37
+YAML::Tiny  1.76

@@ -1,4 +1,6 @@
+\#*
 **/*.pm
+**/*.pl
 *.tmp
 *.tar.gz
 provides

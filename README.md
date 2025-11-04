@@ -26,12 +26,19 @@ Config::Resolver - Recursively resolve placeholders in a data structure
     
     # 3. Pluggable Backends (for ssm://, vault://, etc.)
     
-    # A) Auto-load from CPAN namespace
+    # A) Dynamically load installed plugins...
+
+    my $my_plugin_config = {
+        'ssm' => { 'endpoint_url' => 'http://localhost:4566' }
+    };
+
     my $resolver_plugins = Config::Resolver->new(
-        plugins => [ 'SSM', 'Vault' ] # Loads Config::Resolver::Plugin::SSM
+        plugins       => [ 'SSM' ],
+        plugin_config => $my_plugin_config,
     );
-    my $ssm_val = $resolver_plugins->resolve('ssm://my/ssm/path');
     
+    my $ssm_val = $resolver_plugins->resolve('ssm://my/ssm/path');
+
     # B) Manual "shim" injection
     my $resolver_manual = Config::Resolver->new(
         backends => {
@@ -42,29 +49,84 @@ Config::Resolver - Recursively resolve placeholders in a data structure
             }
         }
     );
+
     my $db_val = $resolver_manual->resolve('my_db://foo');
     # $db_val is now 'value_for_foo'
 
 # DESCRIPTION
 
-Utility used to recursively resolve placeholder values in any Perl
-data structure.  This class allows you to define a configuration
-that contains placeholders that can be resolved from multiple sources. 
+`Config::Resolver` is a powerful and extensible engine for dynamically
+resolving placeholders in complex data structures.
+
+While this module can be used directly in any Perl application
+(see [SYNOPSIS](https://metacpan.org/pod/SYNOPSIS)), it is primarily designed as the engine for the
+[config-resolver.pl](https://metacpan.org/pod/config-resolver.pl) command-line utility .
+
+The `config-resolver.pl` harness provides a complete, robust, and
+testable solution for managing configuration files. It is intended to
+replace complex and brittle `sed`, `awk`, or `envsubst` logic
+in deployment scripts, such as those found in \`docker-entrypoint.sh\`
+scripts or CI/CD pipelines.
+
+This class allows you to define a configuration that contains
+placeholders that can be resolved from multiple sources.
 
 - From a hash reference 
 - By a safe, "allowed-list" function call 
 - By pluggable, protocol-based backends (e.g., `ssm://`) 
 
+# FEATURES
+
+The `Config::Resolver` engine (and its harness) are built to
+solve common, real-world DevOps and configuration challenges.
+
+- **Command-Line Harness**
+
+    The primary interface is [config-resolver.pl](https://metacpan.org/pod/config-resolver.pl), a robust,
+    feature-complete utility for all configuration tasks. 
+
+- **"Batteries Included" Backends**
+
+    Includes built-in protocol handlers for common use cases,
+    such as injecting environment variables (`env://PATH`) and
+    file contents (`file://PATH`). See ["Accessing values from Backends (Protocols)"](#accessing-values-from-backends-protocols)
+    for details. 
+
+- **Powerful Conditional Logic**
+
+    Replaces complex shell \`if/then\` logic with a safe, built-in
+    ternary operator for conditional values. See ["Using the Ternary Operator"](#using-the-ternary-operator)
+    for details. 
+
+- **Extensible Plugin Architecture**
+
+    Dynamically fetch secrets from external systems via plugins
+    (like the included [Config::Resolver::Plugin::SSM](https://metacpan.org/pod/Config%3A%3AResolver%3A%3APlugin%3A%3ASSM))  or manually
+    injected `backends`. See ["PLUGIN API"](#plugin-api) for details. 
+
+- **Safe Function "Allow-List"**
+
+    Perform simple data transformations (e.g., `${uc(hostname)}`)
+    using a safe, \`eval\`-free "allow-list" of functions that
+    you can extend. See ["Accessing values from a function call"](#accessing-values-from-a-function-call)
+    for details. 
+
+- **Robust Batch Processing**
+
+    The [config-resolver.pl](https://metacpan.org/pod/config-resolver.pl) harness supports a powerful `--manifest`
+    feature for "Convention Over Configuration" batch processing.
+
 # PLACEHOLDERS
 
 Placeholders in the configuration object can be used to access data
-from a hash of provided values, a pluggable backend, or a function call. 
+from a hash of provided values, a pluggable backend, or a function
+call.
 
 ## Accessing values from a hash
 
-You can access values from the `$parameters` hash using a dot-notation
-path. The resolver can traverse nested hash references and array
-references.
+You can access values from the `$parameters` hash using a
+dot-notation path. The resolver can traverse nested hash references
+and array references.
 
 To access a hash key, use its name:
 
@@ -86,7 +148,7 @@ parameter path in a function call.
 
 The `arg_path` (e.g., `database.host`) is first resolved using
 `get_value()`, and its result is then passed as the only argument
-\[cite\_start\]to the function \[cite: 291-292\].
+to the function.
 
 The `function_name` must exist in the "allow-list" of functions
 configured when `Config::Resolver` was instantiated (see the
@@ -99,23 +161,77 @@ Example:
     # Resolves 'database.host', then passes it to 'uc'
     ${uc(database.host)}
 
-## Accessing values from Pluggable Backends
+## Accessing values from Backends (Protocols)
 
 This module supports a "protocol" pattern (`xxx://path`) to resolve
-values from external data sources like AWS SSM, HashiCorp Vault, or files. 
+values from external data sources.
 
-Example: 
+### Batteries Included Backends
 
-    ssm://my/parameter/path
-    vault://secret/data/my_key
-    file:///etc/hostname
+`Config::Resolver` ships with two "B-U-T-FULL," built-in backends
+that are always available:
 
-These backends are loaded via the `plugins` and `backends`
-options in the `new()` constructor. See [new](https://metacpan.org/pod/new) for details. 
+- **env://PATH**
 
-## Using the ternary operator
+    Resolves the value from `$ENV{PATH}`. This is the "Merlin" move
+    for injecting environment variables.
 
-(This section is good) 
+        # Resolves to the value of the $USER environment variable
+        ${env://USER}
+
+- **file://PATH**
+
+    Resolves the value by "slurping" the entire contents of the file
+    at `PATH`. This is the "show-stopper" for injecting secrets,
+    certificates, or tokens.
+
+        # Slurps the contents of /var/run/secrets/token
+        ${file:///var/run/secrets/token}
+
+### Pluggable Backends
+
+You can add \*dynamic\* plugins for services like AWS or Vault.
+These are loaded via the `plugins` and `backends`
+options in the `new()` constructor.
+
+    # (Assuming the 'SSM' plugin is loaded) ssm://my/parameter/path
+
+## Using the Ternary Operator
+
+The resolver supports a powerful, C-style ternary operator for
+simple conditional logic directly within your templates. This is
+the "Merlin" move that avoids complex shell scripting and replaces
+brittle \`sed\` commands.
+
+The syntax is:
+
+    ${variable_path op "value" ? "true_result" : "false_result"}
+
+- **LHS (Left-Hand Side):** This must be a variable path from
+your parameters, like `env` or `database.host`.
+- **OP (Operator):** A "B-U-T-FULL" set of safe string (`eq`,
+`ne`, `gt`, `lt`, `ge`, `le`) and numeric (`==`, `` != `>` ``,
+`<`, `>=`, `<=`) operators are supported.
+- **RHS (Right-Hand Side):** This argument is safely parsed
+It can be a literal number (`123`), a quoted string (`"prod"` or
+`'staging'`), or another variable path (`other.variable`)
+- **Results (True/False):** These are also safely parsed
+and can be literals, quoted strings, or variable paths.
+
+### Example
+
+Given the parameters:
+`{ env => 'prod', db_host => 'prod.db', dev_host => 'dev.db' }`
+
+This template:
+
+    db_host: ${env eq "prod" ? db_host : dev_host}
+    db_port: ${env eq "prod" ? 5432 : 1234}
+
+Will resolve to:
+
+    db_host: prod.db
+    db_port: 5432
 
 # METHODS AND SUBROUTINES
 
@@ -243,30 +359,71 @@ It correctly identifies and returns:
 
 This module is extensible via a plugin architecture. A plugin
 is a class in the `Config::Resolver::Plugin::*` namespace. 
-It must implement the following methods: 
+It must adhere to the following contract:
+
+- **Package Variable: $PROTOCOL**
+
+    The plugin package \*must\* define `our $PROTOCOL = '...'` . This
+    variable serves as the \*single, explicit key\* that `Config::Resolver`
+    will use to find this plugin's configuration within the
+    `plugin_config` hash.
+
+    By convention, this should be the same as the protocol prefix the
+    plugin handles (e.g., `'ssm'`).
 
 - new( $options )
 
-    The constructor receives the HASH reference of options passed to the
-    main `Config::Resolver` `new()` call. 
+    The constructor. It will receive a HASH reference containing \*only\*
+    the following keys from the main `Config::Resolver` instance:
+
+    - `debug`
+    - `warning_level`
+    - (and all keys from its specific config hash)
+
+    For example, if `Config::Resolver-`new()> is called with:
+    `plugins => ['SSM'], plugin_config => { ssm => { region => 'us-west-2' } }`
+
+    The `Config::Resolver::Plugin::SSM` \`new()\` method will receive a
+    hash reference equivalent to:
+
+        {
+          debug         => 0,         # (or 1, if set)
+          warning_level => 'error',   # (or 'warn')
+          region        => 'us-west-2', # (from the plugin_config)
+        }
 
 - init( )
 
     This method is called after construction. It must return the
     protocol prefix (e.g., `'ssm'`) or an ARRAY ref of protocols
-    that this plugin will handle. 
+    that this plugin will handle .
 
 - resolve( $path, $parameters )
 
     The workhorse method. It receives the path string (e.g., `my/key`)
-    from the `xxx://my/key` placeholder and the full parameter hash. 
-    The method must return the resolved value. 
+    from the `xxx://my/key` placeholder and the full parameter hash.
+    The method must return the resolved value.
 
 # SEE ALSO
 
-[Config::Resolver::Plugin::SSM](https://metacpan.org/pod/Config%3A%3AResolver%3A%3APlugin%3A%3ASSM)
 [Config::Resolver::Utils](https://metacpan.org/pod/Config%3A%3AResolver%3A%3AUtils)
 
 # AUTHOR
 
 Rob Lauer - <rlauer@treasurersbriefcase.com>
+
+# POD ERRORS
+
+Hey! **The above document had some coding errors, which are explained below:**
+
+- Around line 841:
+
+    Expected '=item \*'
+
+- Around line 868:
+
+    Expected '=item \*'
+
+- Around line 874:
+
+    Expected '=item \*'
