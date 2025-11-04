@@ -1,3 +1,15 @@
+Tue Nov  4 07:59:49 2025  Rob Lauer  <rclauer@gmail.com>
+
+	[1.0.3]:
+	* VERSION: bump
+	* Makefile
+	- fix dependencies
+	- clean
+	* lib/Config/Resolver.pm.in
+	- localize die handler (Amazon::API needs to remove Carp::Always)
+	- update email address
+	* buildspec.yml: update email address
+
 Mon Nov  3 22:18:21 2025  Rob Lauer  <rclauer@gmail.com>
 
 	[1.0.2]:

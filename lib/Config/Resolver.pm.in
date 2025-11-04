@@ -12,6 +12,9 @@ use Scalar::Util qw(looks_like_number reftype blessed);
 
 use Config::Resolver::Utils qw(is_hash is_array slurp_file);
 
+local $SIG{__WARN__} = 'DEFAULT';
+local $SIG{__DIE__}  = 'DEFAULT';
+
 use Readonly;
 
 Readonly::Scalar our $TRUE  => 1;
@@ -205,8 +208,12 @@ sub resolve_value {
 
       my $v = $self->get_parameter( $parameters, $p );
 
-      die "could not resolve [$p]\n" . Dumper($parameters)
-        if !defined $v && $self->get_warning_level eq 'error';
+      {
+        local $SIG{__DIE__} = 'DEFAULT';
+
+        die "could not resolve [$p]\n"
+          if !defined $v && $self->get_warning_level eq 'error';
+      }
 
       $vars{$p} = $v;
     }
@@ -885,7 +892,7 @@ L<Config::Resolver::Utils>
 
 =head1 AUTHOR
 
-Rob Lauer - <rlauer@treasurersbriefcase.com>
+Rob Lauer - <rclauer@gmail.com>
 
 =cut
 

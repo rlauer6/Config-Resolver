@@ -410,20 +410,20 @@ It must adhere to the following contract:
 
 # AUTHOR
 
-Rob Lauer - <rlauer@treasurersbriefcase.com>
+Rob Lauer - <rclauer@gmail.com>
 
 # POD ERRORS
 
 Hey! **The above document had some coding errors, which are explained below:**
 
-- Around line 841:
+- Around line 848:
 
     Expected '=item \*'
 
-- Around line 868:
+- Around line 875:
 
     Expected '=item \*'
 
-- Around line 874:
+- Around line 881:
 
     Expected '=item \*'
