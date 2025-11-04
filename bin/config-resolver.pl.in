@@ -18,6 +18,7 @@ use File::Basename;
 use Getopt::Long qw(:config no_ignore_case );
 use JSON -convert_blessed_universally;
 use List::Util qw(any);
+use Module::Load;
 use Query::Param;
 use Scalar::Util qw(looks_like_number reftype);
 use YAML::Tiny qw(LoadFile Dump Load);
@@ -393,18 +394,28 @@ sub _build_plugin_config {
   my $rc_file = $ENV{HOME} . '/.config-resolverrc';
 
   my $rc_config = -e $rc_file ? $self->fetch_file($rc_file) : {};
+  my %plugin_configs;
+
+  foreach my $section ( keys %{$rc_config} ) {
+    if ( $section =~ /^plugin\s(.*)$/xsm ) {
+      next if $rc_config->{$section}->{enabled} && $rc_config->{$section}->{enabled} eq 'false';
+      # default to true
+      $plugin_configs{$1} = $rc_config->{$section};
+    }
+  }
 
   # Layer 2: Parse CLI arguments
   my $cli_config  = {};
   my $plugin_args = $self->get_plugin // [];
 
   for my $arg ( @{$plugin_args} ) {
-    my ( $plugin_name, $key_value_pair ) = split /:/, $arg, 2;
+    my ( $plugin_name, $key_value_pair ) = split /:/xsm, $arg, 2;
     if ( !$key_value_pair ) {
       warn "WARNING: Ignoring malformed --plugin argument: $arg\n";
       next;
     }
-    my ( $key, $value ) = split /=/, $key_value_pair, 2;
+
+    my ( $key, $value ) = split /=/xsm, $key_value_pair, 2;
     if ( !defined $value ) {
       warn "WARNING: Ignoring malformed --plugin argument: $arg\n";
       next;
@@ -412,10 +423,36 @@ sub _build_plugin_config {
     $cli_config->{$plugin_name}{$key} = $value;
   }
 
+  # add auto plugins
+  my @plugins = split /\s*,\s*/xsm, $self->get_plugins // $EMPTY;
+
+  $self->set_plugins( join q{,}, @plugins, keys %plugin_configs );
+
+  foreach my $plugin_name ( split /\s*,\s*/xsm, $self->get_plugins ) {
+    my $class = 'Config::Resolver::Plugin::' . $plugin_name;
+    load $class;
+
+    my $protocol;
+
+    my $stash_name = $class . q{::};  # e.g., 'Config::Resolver::Plugin::SSM::'
+
+    {
+      no strict 'refs';               ## no critic
+
+      $protocol = ${ $stash_name . 'PROTOCOL' };
+
+      croak "Plugin $class must define a package variable '\$PROTOCOL'."
+        if !$protocol;
+    }
+
+    $plugin_configs{$protocol} = delete $plugin_configs{$plugin_name};
+  }
+
   # Layer 3: Deeply merge them (CLI wins)
-  my $final_plugin_config = { %{$rc_config} };
+  my $final_plugin_config = \%plugin_configs;
+
   foreach my $plugin_name ( keys %{$cli_config} ) {
-    $final_plugin_config->{$plugin_name} = { %{ $rc_config->{$plugin_name} // {} }, %{ $cli_config->{$plugin_name} } };
+    $final_plugin_config->{$plugin_name} = { %{ $plugin_configs{$plugin_name} // {} }, %{ $cli_config->{$plugin_name} } };
   }
 
   return $final_plugin_config;

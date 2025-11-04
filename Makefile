@@ -14,8 +14,6 @@ BIN_SCRIPTS = \
 
 VERSION := $(shell cat VERSION)
 
-include version.mk
-
 TARBALL = Config-Resolver-$(VERSION).tar.gz
 
 all: $(TARBALL)
@@ -33,5 +31,8 @@ $(TARBALL): buildspec.yml $(PERL_MODULES) $(BIN_SCRIPTS) requires test-requires 
 README.md: $(PERL_MODULES)
 	pod2markdown $< > $@
 
+include version.mk
+
 clean:
-	rm -f *.tar.gz lib/*.pm bin/*.pl
+	rm -f *.tar.gz
+	find . -name '*.p[ml]' -exec rm {} \;

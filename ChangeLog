@@ -1,3 +1,16 @@
+Mon Nov  3 22:18:21 2025  Rob Lauer  <rclauer@gmail.com>
+
+	[1.0.2]:
+	* Makefile
+	- move verion.mk lower
+	- clean .pl, .pm files
+	* VERSION: bump
+	* bin/config-resolver.pl.in
+	(_build_plugin_config)
+	- use [plugin NAME] for section names
+	- add plugins defined in .config-resourcerc to the plugin list
+	* t/01_plugin_config.t: modify tests for new config format
+
 Mon Nov  3 20:08:58 2025  Rob Lauer  <rclauer@gmail.com>
 
 	[1.0.1]:

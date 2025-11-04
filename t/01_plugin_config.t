@@ -123,7 +123,7 @@ subtest 'Test Case: RC file only' => sub {
   my $rc_file_path = File::Spec->catfile( $temp_dir, '.config-resolverrc' );
 
   # 2. Write the temp RC file (using the INI format we proved)
-  my $rc_file_content = "[ssm]\nregion = us-east-1\n";
+  my $rc_file_content = "[plugin SSM]\nregion = us-east-1\n";
   open my $fh, '>', $rc_file_path or die "Could not write $rc_file_path: $OS_ERROR";
   print ${fh} $rc_file_content;
   close $fh;
@@ -155,7 +155,7 @@ subtest 'Test Case: RC and CLI merge (CLI wins)' => sub {
   my $rc_file_path = File::Spec->catfile( $temp_dir, '.config-resolverrc' );
 
   # 2. Write the temp RC file
-  my $rc_file_content = "[ssm]\nregion = us-east-1\nendpoint_url = http://prod.example.com\n";
+  my $rc_file_content = "[plugin SSM]\nregion = us-east-1\nendpoint_url = http://prod.example.com\n";
   open my $fh, '>', $rc_file_path or die "Could not write $rc_file_path: $!";
   print $fh $rc_file_content;
   close $fh;
