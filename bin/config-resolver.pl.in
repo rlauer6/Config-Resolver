@@ -281,7 +281,7 @@ sub fetch_parameters {
   my ($self) = @_;
 
   if ( my $file = $self->get_parameter_file ) {
-    my $parameters = $self->fetch_file($file);
+    my $parameters = $self->fetch_file($file) // {};
 
     my $new_hash = { %{ $self->get_parameters_hash // {} }, %{$parameters} };
     $self->set_parameters_hash($new_hash);
@@ -337,15 +337,19 @@ sub fetch_file {
 ########################################################################
   my ( $self, $file ) = @_;
 
+  if ( $file eq q{-} || ( !$file && !-t STDIN ) ) {  ## no critic (ProhibitInteractiveTest)
+
+    return if STDIN->eof();
+
+    local $RS = undef;
+    my $content = <>;
+
+    my $obj = eval { return to_object($content); };
+
+    return $obj // $content;
+  }
+
   my $obj = eval {
-    if ( $file eq q{-} || ( !$file && !-t STDIN ) ) {  ## no critic (ProhibitInteractiveTest)
-      local $RS = undef;
-      my $content = <>;
-
-      my $obj = eval { return to_object($content); };
-
-      return $obj // $content;
-    }
 
     return from_ini_file( slurp_file $file )
       if $file =~ /[.]config-resolverrc$/xsm;
@@ -1036,9 +1040,92 @@ B<Example:>
 The script merges these two sources, giving command-line options final
 priority, and passes the result to the resolver engine.
 
+=head2 Plugin "Setup-Only" Execution Mode
+
+This script does not have a default command (like C<resolve> or C<dump>).
+This intentional design enables a powerful "init-only" workflow for plugins
+that need to perform on-demand setup or initialization tasks.
+
+If you run C<config-resolver.pl> *without* a command, it will:
+
+=over 4
+
+=item Execute its full initialization phase (parsing all CLI args,
+loading plugins, and running their C<new()> or C<init()> methods).
+
+=item Proceed to the C<run()> phase, find no command, and exit cleanly.
+
+=back
+
+This allows you to add features to your plugin's C<init()> method
+that are triggered by a specific CLI flag. This is the recommended
+pattern for tasks like seeding a local datastore (e.g., LocalStack) or
+performing a one-time authentication.
+
+=head3 Recipe for a Plugin "Init-Task"
+
+Follow this 3-step recipe to add an on-demand setup task to your
+plugin.
+
+=over 4
+
+=item 1. Define Configuration Keys
+
+In your plugin's documentation, define the keys a user must set in
+their C<.config-resolverrc> file .
+
+  # In .config-resolverrc
+  [plugin ssm]
+    endpoint_url = http://localhost:4566
+    
+    # --- Keys for your one-time setup ---
+    seed_file = /opt/my-app/localstack-seed.json
+    load_on_init = false # <-- Default to false!
+
+=item 2. Add Logic to Your Plugin's C<new()>
+
+In your plugin's C<new()> constructor, check for your flag.
+
+  # In lib/Config/Resolver/Plugin/SSM.pm
+  sub new {
+      my ($class, $options) = @_;
+      my $self = $class->SUPER::new($options);
+
+      # --- This is the "on-demand" hook ---
+      if ( my $seed_file = $self->get_load_on_init ) {
+          print {*STDERR} "Seeding SSM from $seed_file...\n";
+          $self->load_data_from_file( $seed_file );
+      }
+      # --- End of hook ---
+
+      return $self;
+  }
+
+=item 3. Document the User's Command
+
+Finally, document the command the user must run. Because the CLI 
+flag trumps the config file , this single command
+will trigger your logic:
+
+  # Triggers the one-time setup:
+  $ config-resolver.pl --plugins SSM --plugin ssm:load_on_init=true
+
+B<How This Works:> The script runs, but no command (like C<resolve>)
+is given. The C<init()> phase runs, loading your plugin. The
+C<--plugin> flag overrides the config file, setting C<load_on_init> to
+true. Your C<new()> method fires, sees the flag, and runs your setup
+logic. The script then exits cleanly because no command was specified.
+
+=back
+
+This workflow is fully compatible with STDIN. If your plugin's C<init()>
+task reads from STDIN (e.g., C<ssm:load=-_>), C<config-resolver.pl> will
+politely detect that the STDIN stream has already been consumed and
+will not attempt to read from it again.
+
 =head1 AUTHOR
 
-Rob Lauer - <bigfoot@cpan.org>
+Rob Lauer - <rclauer@gmail.com>
 
 =head1 SEE ALSO 
 
