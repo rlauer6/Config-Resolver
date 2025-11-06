@@ -1,3 +1,24 @@
+Thu Nov  6 07:10:18 2025  Rob Lauer  <rclauer@gmail.com>
+
+	[1.0.4]:
+	* VERSION: bump
+	* README.md: generated
+	* requires
+	- +CLI::Simple, Config::INI::Tiny, Module::Load, YAML::Tiny,
+	- + Readonly, JSON, Query::Param
+	* t/03_cmd_dump.t
+	- move file creation to init()
+	* bin/config-resolver.pl.in
+	(build_manifest): new
+	(cmd_resolve)
+	- build a manifest if the template is a directory
+	(cmd_dump)
+	- set parameters_hash from parameter file
+	- refactoring
+	(to_object): croak if no content
+	(main)
+	- added option output_dir to support manifest
+
 Tue Nov  4 07:59:49 2025  Rob Lauer  <rclauer@gmail.com>
 
 	[1.0.3]:

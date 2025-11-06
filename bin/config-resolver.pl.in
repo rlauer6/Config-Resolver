@@ -15,6 +15,7 @@ use Config::Resolver::Utils qw(is_hash is_array to_boolean slurp_file);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use File::Basename;
+use File::Temp qw(tempfile);
 use Getopt::Long qw(:config no_ignore_case );
 use JSON -convert_blessed_universally;
 use List::Util qw(any);
@@ -57,6 +58,7 @@ sub process_manifest {
     if !$jobs || ref $jobs ne 'ARRAY';
 
   for my $job ( @{$jobs} ) {
+
     # 1. Merge globals and job-specific configs
     my $final_job = { %{$globals}, %{$job} };
 
@@ -97,12 +99,71 @@ sub process_manifest {
 }
 
 ########################################################################
+sub build_manifest {
+########################################################################
+  my ($self) = @_;
+
+  my $output_dir   = $self->get_output_dir;
+  my $template_dir = $self->get_template;
+
+  opendir my $dh, $template_dir
+    or croak "Can't opendir $template_dir: $OS_ERROR";
+
+  my @templates = map {"$template_dir/$_"} grep {/[.]tpl$/xsm} readdir $dh;
+  closedir $dh;
+
+  croak "ERROR: no templates found, templates should have an .tpl extension\n"
+    if !@templates;
+
+  my ( $fh, $manifest_file ) = tempfile( 'manifest-XXXXX', SUFFIX => '.yml', );  #UNLINK => $TRUE);
+
+  my $parameter_file = $self->get_parameter_file;
+  my $umask          = $self->get_umask // umask;
+
+  print {$fh} <<"END_OF_MANIFEST";
+---
+globals:
+  parameters: $parameter_file
+  umask: $umask
+
+jobs:
+END_OF_MANIFEST
+
+  foreach my $template (@templates) {
+    print {$fh} sprintf "  - template: %s\n", $template;
+    print {$fh} sprintf "    outfile: %s/%s\n\n", $output_dir, basename( $template, '.tpl' );
+  }
+
+  close $fh;
+
+  $self->set_manifest($manifest_file);
+
+  return @templates;
+}
+
+########################################################################
 sub cmd_resolve {
 ########################################################################
   my ($self) = @_;
 
   return $self->process_manifest
     if $self->get_manifest;
+
+  if ( $self->get_template && -d $self->get_template ) {
+    my $parameter_file = $self->get_parameter_file;
+
+    croak "ERROR: --parameter-file is missing or invalid\n"
+      if !$parameter_file || !-e $parameter_file;
+
+    my $output_dir = $self->get_output_dir;
+    croak
+      "ERROR: --output-dir is missing or invalid. You must specify an output directory when you specify a template directory\n"
+      if !$output_dir || !-d $output_dir;
+
+    $self->build_manifest();
+
+    return $self->cmd_resolve();
+  }
 
   $self->resolve;
 
@@ -133,7 +194,12 @@ sub resolve {
 
   my $resolver = $self->get_resolver;
 
-  my $output = $resolver->resolve( $self->get_parameters_hash );
+  my $parameters = $self->get_parameters_hash;
+
+  croak "ERROR: no parameters available for merging\n"
+    if !$parameters;
+
+  my $output = $resolver->resolve($parameters);
 
   if ( my $template = $self->get_template ) {
     my $template_obj = $self->fetch_file($template);
@@ -157,18 +223,22 @@ sub cmd_dump {
   my ($self) = @_;
 
   my ($file) = $self->get_args;
-  $file //= $self->get_parameters;
 
-  croak "ERROR: no file specified for dump, use --parameters or dump filename\n"
-    if !$file;
+  if ( !$file && !$self->get_parameters_hash ) {
+    croak "ERROR: no file specified for dump, use --parameter-file or dump filename\n";
+  }
+  elsif ( !$self->get_parameters_hash && !-e $file ) {
+    croak "ERROR: no such file - $file\n";
+  }
+  else {
+    $self->set_parameter_file($file);
+    $self->fetch_parameters();
+  }
 
-  croak "ERROR: no such file - $file\n"
-    if !-e $file;
+  my $object = $self->get_parameters_hash;
 
-  my $object = $self->fetch_file($file);
-
-  if ( $self->get_key ) {
-    $self->write_output( $object->{ $self->get_key } );
+  if ( my $key = $self->get_key ) {
+    $self->write_output( $object->{$key} );
   }
   else {
     $self->write_output($object);
@@ -225,6 +295,9 @@ sub to_object {
 ########################################################################
   my ($content) = @_;
 
+  croak "ERROR: no content\n"
+    if !$content;
+
   local $SIG{__WARN__} = sub { };
 
   my $obj = eval { from_json($content); };
@@ -268,7 +341,8 @@ sub fetch_file {
     if ( $file eq q{-} || ( !$file && !-t STDIN ) ) {  ## no critic (ProhibitInteractiveTest)
       local $RS = undef;
       my $content = <>;
-      my $obj     = eval { return to_object($content); };
+
+      my $obj = eval { return to_object($content); };
 
       return $obj // $content;
     }
@@ -523,6 +597,7 @@ sub main {
     key|k=s
     manifest|m=s
     outfile|o=s
+    output_dir|O=s
     parameter-file|p=s
     pretty|P
     parameters|V=s

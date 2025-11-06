@@ -1,5 +1,9 @@
-JSON                    4.10
-Module::Load            0.36
+CLI::Simple               1.0.9
 Class::Accessor::Fast   0.51
-Readonly                2.05
+Config::INI::Tiny         0.106
+JSON                      4.10
 List::Util              1.29
+Module::Load            0.36
+Query::Param              0.02
+Readonly                2.05
+YAML::Tiny                1.76
