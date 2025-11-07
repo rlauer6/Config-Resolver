@@ -416,14 +416,14 @@ Rob Lauer - <rclauer@gmail.com>
 
 Hey! **The above document had some coding errors, which are explained below:**
 
-- Around line 848:
+- Around line 865:
 
     Expected '=item \*'
 
-- Around line 875:
+- Around line 892:
 
     Expected '=item \*'
 
-- Around line 881:
+- Around line 898:
 
     Expected '=item \*'

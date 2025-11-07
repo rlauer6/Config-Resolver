@@ -9,12 +9,12 @@ use strict;
 use warnings;
 
 use Carp;
-use CLI::Simple::Constants qw(:booleans :chars);
+use CLI::Simple::Constants qw(:booleans :chars :log-levels);
 use Config::Resolver;
 use Config::Resolver::Utils qw(is_hash is_array to_boolean slurp_file);
 use Data::Dumper;
 use English qw(-no_match_vars);
-use File::Basename;
+use File::Basename qw(basename);
 use File::Temp qw(tempfile);
 use Getopt::Long qw(:config no_ignore_case );
 use JSON -convert_blessed_universally;
@@ -23,6 +23,8 @@ use Module::Load;
 use Query::Param;
 use Scalar::Util qw(looks_like_number reftype);
 use YAML::Tiny qw(LoadFile Dump Load);
+
+__PACKAGE__->use_log4perl( level => 'warn' );
 
 use parent qw(CLI::Simple);
 
@@ -36,6 +38,10 @@ use File::Basename;  # <-- Make sure to 'use' this at the top of the file
 sub process_manifest {
 ########################################################################
   my ($self) = @_;
+
+  my $logger = $self->get_logger;
+
+  $logger->info('processing manifest file...');
 
   my $manifest_file = $self->get_manifest;
 
@@ -58,18 +64,19 @@ sub process_manifest {
     if !$jobs || ref $jobs ne 'ARRAY';
 
   for my $job ( @{$jobs} ) {
-
     # 1. Merge globals and job-specific configs
     my $final_job = { %{$globals}, %{$job} };
 
     # 2. Extract final values
-    my $outfile    = $final_job->{outfile};
+    my $outfile    = $final_job->{outfile} // q{};
     my $parameters = $final_job->{parameters};
-    my $template   = $final_job->{template};   # Might be undef
+    my $template   = $final_job->{template} // q{};
+
+    $logger->info( sprintf 'processing job: %s => %s', $template, $outfile );
 
     if ( !$template && $outfile && $final_job->{template_path} ) {
       my $template_name = basename($outfile);
-      $template = $final_job->{template_path} . '/' . $template_name . '.tpl';
+      $template = sprintf '%s/%s.tpl', $final_job->{template_path}, $template_name;
 
       # Store the derived template path back in the hash
       $final_job->{template} = $template;
@@ -90,9 +97,13 @@ sub process_manifest {
     $self->set_template($template);
     $self->set_outfile($outfile);
     $self->set_umask( $final_job->{umask} ) if $final_job->{umask};
+    $logger->info( sprintf 'resolving %s using %s => %s (umask %o)',
+      $template, $parameters, $outfile, $final_job->{umask} // 0 );
 
     $self->fetch_parameters();
     $self->resolve();
+
+    $logger->info( sprintf '%s %s rendered', $outfile, -e $outfile ? 'sucessfully' : '*was not*' );
   }
 
   return $SUCCESS;
@@ -139,6 +150,16 @@ END_OF_MANIFEST
   $self->set_manifest($manifest_file);
 
   return @templates;
+}
+
+########################################################################
+sub cmd_version {
+########################################################################
+  my ($self) = @_;
+
+  print {*STDOUT} sprintf "%s v%s\n", basename($PROGRAM_NAME), $VERSION;
+
+  return $SUCCESS;
 }
 
 ########################################################################
@@ -560,11 +581,20 @@ sub init {
 ########################################################################
   my ($self) = @_;
 
+  if ( $self->get_verbose ) {
+    $self->get_logger->level( $LOG_LEVELS{info} );
+  }
+
+  if ( $self->get_debug ) {
+    $self->get_logger->level( $LOG_LEVELS{debug} );
+  }
+
   $self->check_for_pipelining;
 
   my $final_plugin_config = $self->_build_plugin_config();
 
   my $resolver = Config::Resolver->new(
+    logger        => $self->get_logger,
     plugin_config => $final_plugin_config,
     warning_level => $self->get_warning_level,
     debug         => $self->get_debug,
@@ -584,6 +614,10 @@ sub init {
 
   if ( $self->get_dump ) {
     $self->command('dump');
+  }
+
+  if ( $self->get_version ) {
+    $self->command('version');
   }
 
   return;
@@ -611,11 +645,14 @@ sub main {
     template=s
     umask=s
     warning-level|w=s
+    verbose|v
+    version
   );
 
   my %commands = (
     dump    => \&cmd_dump,
     resolve => \&cmd_resolve,
+    version => \&cmd_version,
   );
 
   my %defaults = (

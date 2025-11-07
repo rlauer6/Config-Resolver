@@ -51,6 +51,7 @@ subtest 'Test Case: Engine - Plugin config is correctly passed' => sub {
   my $global_options = {
     debug         => 1,
     warning_level => 'warn',
+    logger        => undef,
   };
 
   # 2. This is the *full* config hash for *all* plugins

@@ -1,3 +1,26 @@
+Fri Nov  7 08:05:31 2025  Rob Lauer  <rclauer@gmail.com>
+
+	[1.0.6]:
+	* VERSION: bump
+	* README.md: generated
+	* bin/config-resolver.pl.in
+	- set default log level at 'info'
+	(process_manifest): add logging
+	(cmd_version): new
+	(init)
+	- --verbose, --debug should reset log level
+	- pass log_level down the chain
+	- set command to 'version' if --version
+	(main): --verbose, --version
+	* lib/Config/Resolver.pm.in
+	- +logger
+	(new): log message in debug mode
+	(init_plugins)
+	- preserve log level in case plugins boink it
+	- pass logger object down the chain
+	* t/25_plugin_contract.t
+	- add logger object
+
 Thu Nov  6 13:46:01 2025  Rob Lauer  <rclauer@gmail.com>
 
 	[1.0.5]:

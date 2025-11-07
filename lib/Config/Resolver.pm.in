@@ -34,6 +34,7 @@ __PACKAGE__->mk_accessors(
     handler_map
     plugins
     warning_level
+    logger
   )
 );
 
@@ -49,6 +50,10 @@ sub new {
   $options->{warning_level} //= 'error';
 
   my $self = $class->SUPER::new($options);
+
+  if ( $self->get_logger ) {
+    $self->get_logger->debug('initializing resolver...');
+  }
 
   $self->init($options);
 
@@ -143,13 +148,25 @@ sub init_plugins {
     # 2. Get the config for this plugin
     my $plugin_specific_config = $plugin_config_all->{$protocol} // {};
 
+    my $logger = $self->get_logger;
+    my $log_level;
+
+    if ($logger) {
+      $log_level = $logger->level;
+    }
+
     # 3. Create the object
     my $plugin_obj = $class->new(
       { debug         => $options->{debug},
         warning_level => $options->{warning_level},
+        logger        => $logger,
         %{$plugin_specific_config},
       }
     );
+
+    if ($logger) {
+      $logger->level($log_level);
+    }
 
     $plugin_handlers{$protocol} = $plugin_obj;
   }
