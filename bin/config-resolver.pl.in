@@ -474,6 +474,17 @@ sub write_output {
     elsif ( $format =~ /^ya?ml$/xsm ) {
       print {$fh} Dump($obj);
     }
+    elsif ( $format eq 'csv' && reftype($obj) eq 'HASH' ) {
+      my $sep_char = $self->get_separator // q{ = };
+
+      foreach ( keys %{$obj} ) {
+        next if ref $obj->{$_};
+        print {$fh} sprintf "%s%s%s\n", $_, $sep_char, $obj->{$_};
+      }
+    }
+    else {
+      croak "ERROR: unknown format %s\n", $format;
+    }
   }
   else {
     print {$fh} $obj;
@@ -642,6 +653,7 @@ sub main {
     plugins=s
     plugin=s@
     resolve|r
+    separator|S=s
     template=s
     umask=s
     warning-level|w=s
@@ -759,7 +771,7 @@ parameters to a template file.
 =head2 Options
 
  -d, --dump                dump the configuration file
- -f, --format              output format (json or yml), default: json
+ -f, --format              output format (json, yml, csv), default: json
  -g, --debug               debug output
  -h, --help                help
  -k, --key                 key to output from configuration file
@@ -768,6 +780,7 @@ parameters to a template file.
  -V, --parameters          key/value pairs ala CGI (foo=bar&baz=buz)
  --plugins                 a comma separated list of plugins
  -P, --pretty              pretty print JSON
+ -S, --separator           separator character for csv format dump
  -t, --template            name of the template file
  -u, --umask               umask to use output file
  -w, --warning-level       "warn" or "error"
@@ -789,7 +802,11 @@ default: json
 
 =item -f, --format
 
-Output format. Valid values are 'json' or 'yml'.
+Output format. Valid values are 'json', 'yml' or 'csv'.
+
+I<Note: 'csv' format is only valid for dumping a hash. It will output
+a list of key/value pairs separated by a separation character(s)
+(default: ' = '). This will only output the hash to a depth of 1.>
 
 default: json
 
@@ -864,6 +881,13 @@ B<Example:>
  config-resolver -p /etc/tbc-prod.json -r -P
 
  config-resolover -p /etc/tbc-prod.json --pretty resolve
+
+=item -S, --separator
+
+If you want to dump a hash as a flatten list of key/value pairs use
+the C<--format> csv option. This option will set the separator character(s).
+
+default: ' = '
 
 =item -t, --template
 
