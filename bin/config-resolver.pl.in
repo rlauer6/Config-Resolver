@@ -580,7 +580,9 @@ sub check_for_pipelining {
   my $template = $self->get_template;
 
   return
-    if !$pipelining || any { $_ && $_ eq q{-} } ( $parameter_file, $template );
+       if !$pipelining
+    || ( $parameter_file && $template )
+    || any { $_ && $_ eq q{-} } ( $parameter_file, $template );
 
   $self->set( $parameter_file ? 'template' : 'parameter_file', q{-} );
 
