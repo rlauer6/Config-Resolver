@@ -1,3 +1,15 @@
+Sun Dec  7 07:29:05 2025  Rob Lauer  <rclauer@gmail.com>
+
+	[1.0.9]:
+	* VERSION: bump
+	* README.me: generated
+	* bin/config-resolver.pl.in
+	(init)
+	- support -e option
+	(main): likewise
+	* lib/Config/Resolver.pm.in
+	- pod fix
+
 Tue Nov 11 14:45:00 2025  Rob Lauer  <rclauer@gmail.com>
 
 	[1.0.8]:

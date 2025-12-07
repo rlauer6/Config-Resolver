@@ -326,7 +326,9 @@ is the "workhorse" of the resolver and applies resolution in the
 following order:
 
 1\. Pluggable Backends (e.g., `ssm://...`) 
+
 2\. Simple Hash Lookups (e.g., `${foo.bar}`) 
+
 3\. Ternary Operators (e.g., `${... ? ...}`) 
 
 Returns the resolved scalar.
@@ -352,7 +354,9 @@ A safe, `eval`-free parser for arguments within a ternary operator.
 It correctly identifies and returns:
 
 1\. Numbers (`123`) 
+
 2\. Quoted Strings (`"foo"` or `'bar'`), with un-escaping. 
+
 3\. Other values, which are assumed to be parameter paths (`foo.bar`) and are resolved. 
 
 # PLUGIN API
@@ -380,17 +384,17 @@ It must adhere to the following contract:
     - `warning_level`
     - (and all keys from its specific config hash)
 
-    For example, if `Config::Resolver-`new()> is called with:
-    `plugins => ['SSM'], plugin_config => { ssm => { region => 'us-west-2' } }`
+        For example, if `Config::Resolver-`new()> is called with:
+        `plugins => ['SSM'], plugin_config => { ssm => { region => 'us-west-2' } }`
 
-    The `Config::Resolver::Plugin::SSM` \`new()\` method will receive a
-    hash reference equivalent to:
+        The `Config::Resolver::Plugin::SSM` \`new()\` method will receive a
+        hash reference equivalent to:
 
-        {
-          debug         => 0,         # (or 1, if set)
-          warning_level => 'error',   # (or 'warn')
-          region        => 'us-west-2', # (from the plugin_config)
-        }
+            {
+              debug         => 0,         # (or 1, if set)
+              warning_level => 'error',   # (or 'warn')
+              region        => 'us-west-2', # (from the plugin_config)
+            }
 
 - init( )
 
@@ -411,19 +415,3 @@ It must adhere to the following contract:
 # AUTHOR
 
 Rob Lauer - <rclauer@gmail.com>
-
-# POD ERRORS
-
-Hey! **The above document had some coding errors, which are explained below:**
-
-- Around line 865:
-
-    Expected '=item \*'
-
-- Around line 892:
-
-    Expected '=item \*'
-
-- Around line 898:
-
-    Expected '=item \*'

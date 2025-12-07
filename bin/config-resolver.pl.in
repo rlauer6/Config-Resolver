@@ -602,6 +602,23 @@ sub init {
     $self->get_logger->level( $LOG_LEVELS{debug} );
   }
 
+  if ( $self->get_env ) {
+    # create a parameter file from the environment (or add?)
+    my ( $fh, $env_file ) = tempfile( 'env-XXXXX', SUFFIX => '.json', UNLINK => 0 );
+
+    my %parameters = ( env => \%ENV );
+
+    if ( my $parameter_file = $self->get_parameter_file ) {
+      %parameters = ( %parameters, %{ JSON->new_decode( slurp_file($parameter_file) ) } );
+    }
+
+    print {$fh} JSON->new->encode( \%parameters );
+
+    close $fh;
+
+    $self->set_parameter_file($env_file);
+  }
+
   $self->check_for_pipelining;
 
   my $final_plugin_config = $self->_build_plugin_config();
@@ -643,6 +660,7 @@ sub main {
   my @option_specs = qw(
     debug|g
     dump|d
+    env|e
     format|f=s
     help
     key|k=s
@@ -802,6 +820,16 @@ I<Note: This is a deprecated. Use the C<dump> command.>
 
 default: json
 
+=item -e, --env
+
+Uses the current environment variables (C<%ENV>) as the parameter source.
+
+This creates a temporary JSON parameter file containing the current environment
+and uses it for resolution. This is useful for 12-factor apps where configuration
+is passed solely via environment variables.
+
+  config-resolver.pl -e -t app.conf.tpl
+
 =item -f, --format
 
 Output format. Valid values are 'json', 'yml' or 'csv'.
@@ -838,6 +866,12 @@ See L</BATCH PROCESSING USING A MANIFEST FILE>
 Name of the output file to create.  If not present, output is sent to STDOUT.
 
 default: STDOUT
+
+=item -O, --output-dir
+
+The target directory for writing output files.
+
+**Required** when C<--template> is a directory.
 
 =item -p, -- parameter-file
 
@@ -893,28 +927,17 @@ default: ' = '
 
 =item -t, --template
 
-Name of the template file.  A template file can be a text file or a
-file that can be converted into a Perl data structure (.json, .yml).
+Name of the template file **or directory**.
 
-The template typically contains
-interpolation variables like:
+**File Mode:**
+If a file is specified, it treats it as a single template.
 
- ${foo.bar}
+**Directory Mode:**
+If a directory is specified, the script automatically scans it for files ending in
+C<.tpl>. It then generates a corresponding output file for each template in the
+directory specified by C<--output-dir>.
 
-These variables should map to values in the parameter file.  Paths of
-arbitrary complexity are supported.  Arrays are supported by using the
-notation [index].  For example, given the parameter object:
-
- {
-  "foo": {
-      "bar": ["this","that"]
-  }
- }
-
- ${foo.bar[1]}
-
-...would point to the first value in the C<bar> array of the C<foo>
-object, i.e. "this".
+See L</BATCH PROCESSING USING A MANIFEST FILE> for details.
 
 =item -u, --umask
 
@@ -946,49 +969,63 @@ Halts processing if any value cannot be resolved.
 
 =head1 BATCH PROCESSING USING A MANIFEST FILE
 
-This is the most powerful way to use the script for provisioning a set
-of configuration files.
+This feature allows you to provision a set of configuration files in a single
+pass. There are two ways to use batch processing:
 
-The manifest file must be a HASH containing a C<jobs> key. It can also
-contain an optional C<globals> key to reduce repetition.
+=head2 1. Automatic (Directory Mode)
+
+This mode is ideal for simple 1:1 bulk rendering. If you provide a directory
+path to C<--template> (and a target C<--output-dir>), the script automatically
+generates a temporary manifest for you.
+
+It scans for files with a C<.tpl> extension and maps every input template
+to a corresponding output file, stripping the extension.
+
+ # Renders all *.tpl files in /templates to /etc/app
+ config-resolver.pl --template /opt/app/templates --output-dir /etc/app
+
+=head2 2. Manual (Manifest Mode)
+
+For fine-grained control—such as renaming files, using different parameters
+for specific templates, or setting file permissions - you can manually create
+a manifest file and pass it via C<--manifest>.
+
+The manifest file must be a HASH containing a C<globals> hash and a C<jobs> array.
+
+=head3 Manifest Structure
 
 =over 4
 
-=item C<globals>
+=item B<globals> (Optional)
 
-A HASH of default options that will be applied to every job. Common
-keys to set here are C<parameters>, C<template_path>, and C<umask>.
+A HASH of default keys applied to every job. Common defaults include C<parameters>,
+C<template_path>, and C<umask>.
 
-=item C<jobs>
+=item B<jobs> (Required)
 
-A required ARRAY of HASHes. Each HASH in the array represents a single
-"job" to process (i.e., one template to render).
+An ARRAY of HASHes. Each entry represents a single file to generate. Keys defined
+here override those in C<globals>.
 
 =back
 
-=head2 Job Processing
+=head3 Inheritance and Merging
 
-For each job in the C<jobs> array, its keys are merged with the C<globals>
-keys. Any key present in the job HASH will override the value from C<globals>.
+For each job, the resolver merges the job-specific keys over the C<globals>
+keys. After merging, every job B<must> possess at least an C<outfile> and
+a C<parameters> source.
 
-After merging, each job must have at least an C<outfile> and C<parameters>
-key.
+=head3 Convention Over Configuration
 
-=head2 Convention Over Configuration
+You do not always need to explicitly define the C<template> key. If a job omits
+the C<template> key, but C<template_path> is defined (usually in globals),
+the resolver derives the template filename from the C<outfile>:
 
-To simplify the manifest, the C<template> key can be automatically
-derived based on convention:
+ template = template_path / basename(outfile) . '.tpl'
 
-If a job has no C<template> key, but C<globals.template_path> and C<outfile>
-are present, the script will automatically set the template path to:
+This allows you to define the source directory once in C<globals> and only list
+the desired output paths in C<jobs>.
 
-  template = globals.template_path / basename(outfile) . '.tpl'
-
-You can always override this behavior by providing an explicit C<template>
-key in a job, which allows you to handle "one-offs" that don't follow
-the convention.
-
-=head2 Example C<manifest.yml>
+=head3 Example C<manifest.yml>
 
   # --- Global defaults for all jobs ---
   globals:

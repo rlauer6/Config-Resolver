@@ -815,7 +815,9 @@ is the "workhorse" of the resolver and applies resolution in the
 following order:
 
 1. Pluggable Backends (e.g., C<ssm://...>) 
+
 2. Simple Hash Lookups (e.g., C<${foo.bar}>) 
+
 3. Ternary Operators (e.g., C<${... ? ...}>) 
 
 Returns the resolved scalar.
@@ -841,7 +843,9 @@ A safe, C<eval>-free parser for arguments within a ternary operator.
 It correctly identifies and returns:
 
 1. Numbers (C<123>) 
+
 2. Quoted Strings (C<"foo"> or C<'bar'>), with un-escaping. 
+
 3. Other values, which are assumed to be parameter paths (C<foo.bar>) and are resolved. 
 
 =head1 PLUGIN API
@@ -852,7 +856,7 @@ It must adhere to the following contract:
 
 =over 5
 
-=item * B<Package Variable: $PROTOCOL>
+=item B<Package Variable: $PROTOCOL>
 
 The plugin package *must* define C<our $PROTOCOL = '...'> . This
 variable serves as the *single, explicit key* that C<Config::Resolver>
@@ -875,8 +879,6 @@ the following keys from the main C<Config::Resolver> instance:
 
 =item * (and all keys from its specific config hash)
 
-=back
-
 For example, if C<Config::Resolver->new()> is called with:
 C<< plugins => ['SSM'], plugin_config => { ssm => { region => 'us-west-2' } } >>
 
@@ -888,6 +890,8 @@ hash reference equivalent to:
    warning_level => 'error',   # (or 'warn')
    region        => 'us-west-2', # (from the plugin_config)
  }
+
+=back 
 
 =item init( )
 
