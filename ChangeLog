@@ -1,8 +1,14 @@
+Sun Dec  7 11:11:24 2025  Rob Lauer  <rclauer@gmail.com>
+
+	[1.0.10]:
+	* VERSION: bump
+	* bin/config-resolver.pl.in: return q{} when no input stream
+
 Sun Dec  7 07:29:05 2025  Rob Lauer  <rclauer@gmail.com>
 
 	[1.0.9]:
 	* VERSION: bump
-	* README.me: generated
+	* README.md: updated
 	* bin/config-resolver.pl.in
 	(init)
 	- support -e option

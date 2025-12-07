@@ -419,6 +419,9 @@ sub resolve_stream {
 
   my $output = $EMPTY;
 
+  return $output
+    if !$fh || $fh->eof();
+
   while ( my $line = <$fh> ) {
     if ( $line =~ /[$][{](.*)[}]/xsm ) {
       my $ref = $resolver->resolve( { value => $line }, $parameters );
