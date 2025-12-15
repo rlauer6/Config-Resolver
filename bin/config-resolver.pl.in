@@ -126,7 +126,7 @@ sub build_manifest {
   croak "ERROR: no templates found, templates should have an .tpl extension\n"
     if !@templates;
 
-  my ( $fh, $manifest_file ) = tempfile( 'manifest-XXXXX', SUFFIX => '.yml', );  #UNLINK => $TRUE);
+  my ( $fh, $manifest_file ) = tempfile( 'manifest-XXXXX', SUFFIX => '.yml', UNLINK => $TRUE );
 
   my $parameter_file = $self->get_parameter_file;
   my $umask          = $self->get_umask // umask;
@@ -607,7 +607,7 @@ sub init {
 
   if ( $self->get_env ) {
     # create a parameter file from the environment (or add?)
-    my ( $fh, $env_file ) = tempfile( 'env-XXXXX', SUFFIX => '.json', UNLINK => 0 );
+    my ( $fh, $env_file ) = tempfile( 'env-XXXXX', SUFFIX => '.json', UNLINK => $TRUE );
 
     my %parameters = ( env => \%ENV );
 
